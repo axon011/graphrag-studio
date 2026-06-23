@@ -25,12 +25,39 @@ a visual, interactive face on that idea.
 The graph engine is the separate [`graphrag-agent`](https://github.com/axon011/graphrag-agent)
 library — Studio is the application layer on top of it.
 
+## Demo
+
+![GraphRAG Studio](docs/screenshot-home.png)
+
+### On a real corpus — a Master's-thesis repository
+
+Pointed at a thesis repo on efficient Vision Transformer inference and run with a **Claude
+subscription (OAuth, no API key)**, Studio extracted **43 entities and 44 relations** from
+the project's documentation:
+
+![GraphRAG Studio on a thesis repository](docs/screenshot-thesis.png)
+
+The payoff is the **multi-hop** question — the kind flat vector RAG struggles with because
+the answer is an explicit *relationship*, not a passage:
+
+> **Q:** How is Zero-T Pruning related to Weighted PageRank?
+>
+> **A:** Zero-T Pruning **uses** Weighted PageRank as its core algorithm. It runs Weighted
+> PageRank on a layer's attention matrix to score each token's contribution to the global
+> context (the CLS token), then prunes the rest.
+>
+> _cited edge:_ `Zero-T Pruning --uses--> Weighted PageRank`
+
+The agent linked the question to the `Zero-T Pruning` entity, expanded its k-hop
+neighbourhood, and answered from the subgraph — citing the exact relation it traversed.
+
 ## Stack
 
 - **Frontend:** Next.js 15 (App Router), TypeScript, React 19, `react-force-graph-2d`
 - **Backend:** FastAPI, Pydantic, the `graphrag-agent` Python package
 - **LLM:** provider-agnostic via `graphrag-agent` (`GRAPHRAG_LLM=api|codex|claude|gemini|off`).
-  Runs end to end offline with the heuristic extractor when no provider is set.
+  Runs end to end offline with the heuristic extractor when no provider is set, and can
+  use a **Claude Code / Codex CLI subscription instead of an API key** (see below).
 
 ## Run it
 
@@ -45,6 +72,29 @@ uvicorn app.main:app --reload --port 8000
 
 Optional: seed the graph from an existing build with
 `GRAPHRAG_STUDIO_GRAPH=/path/to/kg.json`.
+
+#### LLM provider — no API key required
+
+The backend reads `GRAPHRAG_LLM` to pick how entities/relations are extracted and how
+answers are written:
+
+```bash
+# Use a Claude Code subscription (OAuth) instead of an API key:
+GRAPHRAG_LLM=claude uvicorn app.main:app --reload --port 8000
+
+# Or a Codex CLI subscription:
+GRAPHRAG_LLM=codex  uvicorn app.main:app --reload --port 8000
+
+# Or an OpenAI-compatible API key:
+OPENAI_API_KEY=sk-... GRAPHRAG_LLM=api uvicorn app.main:app --port 8000
+
+# Or fully offline (heuristic extractor — used by the tests):
+GRAPHRAG_LLM=off    uvicorn app.main:app --port 8000
+```
+
+The `claude` provider runs `claude -p` with MCP isolation
+(`--strict-mcp-config --mcp-config '{"mcpServers":{}}'`) so it returns promptly and is not
+slowed by interactive-session hooks.
 
 ### 2. Frontend
 
