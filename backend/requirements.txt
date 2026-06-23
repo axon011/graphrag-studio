@@ -1,0 +1,8 @@
+# GraphRAG Studio backend
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+httpx>=0.27          # for TestClient
+# the graph engine — installed editable from the sibling repo:
+#   pip install -e ../../graphrag-agent
+graphrag-agent>=0.1.0
