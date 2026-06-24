@@ -32,8 +32,9 @@ library — Studio is the application layer on top of it.
 ### On a real corpus — a Master's-thesis repository
 
 Pointed at a thesis repo on efficient Vision Transformer inference and run with a **Claude
-subscription (OAuth, no API key)**, Studio extracted **43 entities and 44 relations** from
-the project's documentation:
+subscription (OAuth, no API key)**, Studio extracted **52 entities and 49 relations** from
+the project's documentation. Asking a question highlights the retrieved subgraph (below) and
+dims the rest:
 
 ![GraphRAG Studio on a thesis repository](docs/screenshot-thesis.png)
 
