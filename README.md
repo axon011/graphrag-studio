@@ -29,6 +29,9 @@ library — Studio is the application layer on top of it.
 
 ![GraphRAG Studio](docs/screenshot-home.png)
 
+_The knowledge graph built from a document set — entities coloured by type, sized by mention
+count. Ask a question and the retrieved subgraph lights up while the rest dims._
+
 ### On a real corpus — a Master's-thesis repository
 
 Pointed at a thesis repo on efficient Vision Transformer inference and run with a **Claude
