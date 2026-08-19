@@ -1,29 +1,52 @@
 # GraphRAG Studio
 
-A full-stack web app for **GraphRAG**: upload documents, watch a typed **knowledge
-graph** build from them, then **chat over k-hop subgraph retrieval** — every answer
-highlights the exact subgraph it used and cites the entities, relations and source
-chunks behind it.
+A **document librarian** built on GraphRAG. Point it at a folder of notes, drafts and papers:
+it builds a typed **knowledge graph** from them, labels every file with the concepts it
+actually covers, makes the whole corpus searchable by idea rather than by filename, and lets
+you **chat over k-hop subgraph retrieval** with citations back to the exact relations it used.
 
 Plain vector RAG retrieves *passages*. GraphRAG retrieves *structure*, so it can answer
-multi-hop questions ("how is X connected to Y?") that flat retrieval misses. This app puts
-a visual, interactive face on that idea.
+multi-hop questions ("how is X connected to Y?") that flat retrieval misses. Studio puts a
+visual, interactive face on that — and then uses the same graph to answer a different
+question: *which file do I actually need?*
 
 ```
- ┌── Next.js + TypeScript frontend ──┐        ┌── FastAPI backend ──┐
- │  force-directed graph view        │  HTTP  │  /api/build  /ask   │
- │  chat panel + citations           │ ─────▶ │  /api/graph  /reset │
- │  document upload                  │        │                     │
- └───────────────────────────────────┘        └──────────┬──────────┘
-                                                          │ imports
-                                              ┌───────────▼───────────┐
-                                              │  graphrag-agent (lib)  │
-                                              │  extract → KG → k-hop  │
-                                              └────────────────────────┘
+ ┌── Next.js + TypeScript frontend ──┐        ┌── FastAPI backend ──────┐
+ │  library view + concept search    │  HTTP  │  /api/docs   /search    │
+ │  force-directed graph view        │ ─────▶ │  /api/ingest /enrich    │
+ │  chat panel + citations           │        │  /api/ask    /graph     │
+ └───────────────────────────────────┘        └──────────┬──────────────┘
+                                                          │
+                              ┌───────────────────────────┼────────────────┐
+                              │                           │                │
+                   ┌──────────▼─────────┐   ┌─────────────▼──────┐  ┌──────▼──────┐
+                   │ librarian crew     │   │ SQLite             │  │ graphrag-   │
+                   │ LangGraph, traced  │   │ docs · labels ·    │  │ agent (lib) │
+                   │ Catalogue→Link→    │   │ links · cache      │  │ extract→KG  │
+                   │ Critic ↺ repair    │   │                    │  │ →k-hop      │
+                   └────────────────────┘   └────────────────────┘  └─────────────┘
 ```
 
 The graph engine is the separate [`graphrag-agent`](https://github.com/axon011/graphrag-agent)
 library — Studio is the application layer on top of it.
+
+## Why
+
+The corpus that drove this is a Master's-thesis working tree: 132 markdown and 308 LaTeX
+files accumulated over two years, containing directories like
+
+```
+Adaptive_prune/archive/old_docs/
+Adaptive_prune/archive/root_clutter/archive_outdated_docs/
+```
+
+An archive nested inside `root_clutter` inside another archive. Finding the current version
+of anything meant grepping, and no tool could answer *"which files cover the Zero-T pruning
+ablation, and which of them are dead drafts?"*
+
+The insight that makes it cheap: the knowledge graph already records which chunks mention
+each entity, and chunk ids carry their source document. Invert that and **a document's labels
+are the concepts it mentions** — no classifier, no second model, no taxonomy to maintain.
 
 ## Demo
 
@@ -55,72 +78,76 @@ the answer is an explicit *relationship*, not a passage:
 The agent linked the question to the `Zero-T Pruning` entity, expanded its k-hop
 neighbourhood, and answered from the subgraph — citing the exact relation it traversed.
 
+## The librarian crew
+
+Graph labels are cheap and topical. They cannot tell a final report from a superseded draft,
+or explain *why* two documents overlap. A small LangGraph crew adds that judgement:
+
+**Cataloguer** (title, abstract, type, status) → **Linker** (typed `supersedes` /
+`derived_from` / `duplicates` links) → **Critic** → bounded **Repair**.
+
+The Critic is load-bearing rather than decorative. It reviews claims it did not author, and
+anything it will not confirm is **dropped, not downgraded** — an unconfirmed `supersedes`
+never reaches the database or the UI. Every run is traced to Langfuse when keys are present,
+and no-ops cleanly when they are not.
+
+Cost is controlled by operating on **documents (440), never chunks (4,900)**, and by
+shortlisting Linker candidate pairs with a SQL entity-overlap query instead of asking a model
+about all 96,000 pairs.
+
+## MCP
+
+The same capability is exposed over MCP, so a coding agent working in the corpus can use it:
+
+`search_docs` · `get_document` · `get_labels` · `find_related` · `ingest_path`
+
+No MCP tool moves, renames or deletes anything. See
+[ADR 0004](docs/adr/0004-propose-never-move.md).
+
 ## Stack
 
 - **Frontend:** Next.js 15 (App Router), TypeScript, React 19, `react-force-graph-2d`
-- **Backend:** FastAPI, Pydantic, the `graphrag-agent` Python package
-- **LLM:** provider-agnostic via `graphrag-agent` (`GRAPHRAG_LLM=api|codex|claude|gemini|off`).
-  Runs end to end offline with the heuristic extractor when no provider is set, and can
-  use a **Claude Code / Codex CLI subscription instead of an API key** (see below).
+- **Backend:** FastAPI, Pydantic, SQLite, LangGraph, the `graphrag-agent` package
+- **Observability:** Langfuse, optional — absent keys degrade to no-ops
+- **LLM:** provider-agnostic via `graphrag-agent`
+  (`GRAPHRAG_LLM=api|codex|claude|gemini|off`). Runs end to end offline with the heuristic
+  extractor, and can use a **Claude Code / Codex CLI subscription instead of an API key**.
 
 ## Run it
 
-### 1. Backend
-
 ```bash
+# backend
 cd backend
 pip install -r requirements.txt
 pip install -e ../../graphrag-agent      # the graph engine (editable)
 uvicorn app.main:app --reload --port 8000
-```
 
-Optional: seed the graph from an existing build with
-`GRAPHRAG_STUDIO_GRAPH=/path/to/kg.json`.
-
-#### LLM provider — no API key required
-
-The backend reads `GRAPHRAG_LLM` to pick how entities/relations are extracted and how
-answers are written:
-
-```bash
-# Use a Claude Code subscription (OAuth) instead of an API key:
-GRAPHRAG_LLM=claude uvicorn app.main:app --reload --port 8000
-
-# Or a Codex CLI subscription:
-GRAPHRAG_LLM=codex  uvicorn app.main:app --reload --port 8000
-
-# Or an OpenAI-compatible API key:
-OPENAI_API_KEY=sk-... GRAPHRAG_LLM=api uvicorn app.main:app --port 8000
-
-# Or fully offline (heuristic extractor — used by the tests):
-GRAPHRAG_LLM=off    uvicorn app.main:app --port 8000
-```
-
-The `claude` provider runs `claude -p` with MCP isolation
-(`--strict-mcp-config --mcp-config '{"mcpServers":{}}'`) so it returns promptly and is not
-slowed by interactive-session hooks.
-
-### 2. Frontend
-
-```bash
+# frontend
 cd frontend
 cp .env.local.example .env.local         # points at http://localhost:8000
-npm install
-npm run dev                              # http://localhost:3000
+npm install && npm run dev               # http://localhost:3000
 ```
 
-Paste text or upload a `.txt`/`.md` file, watch the graph appear, then ask questions.
+Then ingest a corpus:
 
-## API
+```bash
+curl -X POST localhost:8000/api/ingest \
+     -H 'content-type: application/json' \
+     -d '{"path": "docs"}'
+```
 
-| Method | Path           | Body                          | Returns                          |
-| ------ | -------------- | ----------------------------- | -------------------------------- |
-| GET    | `/api/health`  | –                             | graph stats                      |
-| GET    | `/api/graph`   | –                             | `{nodes, edges, stats}`          |
-| POST   | `/api/build`   | `{text, source?, reset?}`     | updated graph                    |
-| POST   | `/api/upload`  | multipart `file` (`?reset=`)  | updated graph                    |
-| POST   | `/api/ask`     | `{question}`                  | `{answer, citations, triples, subgraph_node_ids}` |
-| POST   | `/api/reset`   | –                             | empty graph                      |
+Full setup, environment variables and troubleshooting: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layers, request flows, what is reused and why |
+| [DATA_MODEL.md](docs/DATA_MODEL.md) | SQLite schema, the entity↔document join, cache keys |
+| [AGENTS.md](docs/AGENTS.md) | Crew roles, Critic contract, cost model |
+| [API.md](docs/API.md) | Every HTTP route and MCP tool |
+| [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Setup, env vars, testing, troubleshooting |
+| [adr/](docs/adr/) | Decision records |
 
 ## Tests
 
